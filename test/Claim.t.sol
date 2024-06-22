@@ -16,7 +16,6 @@ contract ClaimTest is Test {
         
     }
 
-
     function test_attack() public {
         vm.startPrank(address(safeNftattacker));
         safeNftattacker.attackSafeNFT(price);

